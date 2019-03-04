@@ -1,0 +1,1478 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "adminUsername": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 12,
+            "metadata": {
+                "description": "The admin user name for the servers."
+            }
+        }, "adminPassword": {
+            "type": "securestring",
+            "minLength": 12,
+            "maxLength": 16,
+            "metadata": {
+                "description": "The admin password."
+            }
+        },
+        "CertificateAuth" : {
+            "type": "bool",
+            "defaultValue": false,
+            "metadata": {
+              "description": "Authenticate Linux Server with Certificate and TurnOff Password Authentcation"
+            }
+        },
+        "adminPublicKey": {
+            "type": "string",
+            "defaultValue": "Enter Certficate for Certificate Authentication",
+            "metadata": {
+                "description": "SSH Public Key for the User Management Server"
+            }
+        },
+        "appDomain": {
+            "type": "string",
+            "defaultValue": "epoaz.net",
+            "metadata": {
+                "description": "The domain name app will be hosted."
+            }
+        },
+        "dnsZoneRG": {
+            "type": "string",
+            "defaultValue": "dName",
+            "metadata": {
+                "description": "The Resource Grp of the DNS zone."
+            }
+        },
+        "SSLOffload" : {
+            "type": "bool",
+            "defaultValue": false,
+            "metadata": {
+              "description": "Create Application Gateway for SSL Offloading"
+            }
+        },
+        "certData": {
+            "type": "string",
+            "defaultValue": "Enter Certificate If SSL Ofload is True",
+            "metadata": {
+              "description": "Base-64 encoded form of the .pfx file"
+            }
+          },
+         "certPassword": {
+            "type": "securestring",
+            "defaultValue": "NoPassword",
+            "minLength" : 0,
+
+            "metadata": {
+              "description": "Password for .pfx certificate. Enter if the SSL offload is true"
+            }
+          }
+    },
+    "variables": {
+
+        "managerName" : "epomgr",
+        "managerNameCert" : "epomgrCert",
+        "managerNIC"  : "epomgr-nic",
+        "managerIPName"  : "epomgr-IP",
+        "managerSGName" : "epomgr-SG",
+
+        "dbServerName" : "[concat(resourceGroup().name,'eposql')]",
+        "administratorLogin" : "[parameters('adminusername')]",
+        "administratorLoginPassword": "[parameters('adminPassword')]",
+        "collation" :"SQL_Latin1_General_CP1_CI_AS",
+        "databaseName" : "[concat(resourceGroup().name,'database')]",
+        "edition" : "Standard",
+        "maxSizeBytes" : "268435456000",
+        "sampleName" : "xyz",
+        "requestedServiceObjectiveId" : "455330e1-00cd-488b-b5fa-177c226f28b7",
+        
+        "sgExtEPO":"[concat(resourceGroup().name,'-nsg-epo')]",
+        "sgExtAH" :"[concat(resourceGroup().name,'-nsg-ah')]",
+        "sgExtBroker" :"[concat(resourceGroup().name,'-nsg-broker')]",
+
+        
+        "virtualNetworkName" : "[concat(resourceGroup().name,'-epo-vnet')]",
+        "addressPrefix" : "10.0.0.0/16",
+        "subnetName" : "default",
+        "subnetPrefix" : "10.0.1.0/24",
+        "agSubnetName" : "agNet",
+        "agSubnetPrefix" : "10.0.2.0/24",
+        "subnetRef": "[concat(variables('vnetId'), '/subnets/', variables('subnetName'))]",
+        "agSubnetRef": "[concat(variables('vnetId'), '/subnets/', variables('agSubnetName'))]",
+        "vnetId": "[resourceId(resourceGroup().name,'Microsoft.Network/virtualNetworks', variables('virtualNetworkName'))]",
+        
+        "virtualMachineSize": "Standard_DS3_v2",
+        "adminUsername" : "[parameters('adminusername')]",
+        "adminPassword": "[parameters('adminPassword')]",
+        
+        "availabilitySetName" : "[concat(resourceGroup().name,'aset')]",
+
+        "virtualMachineName" :"[concat(resourceGroup().name,'epo')]",
+        "networkInterfaceName": "[concat(resourceGroup().name,'-epo-nic')]",
+        
+        "imageId" : "[concat('/subscriptions/dc73da86-0ff1-4998-b337-1341112cf20a/resourceGroups/',resourceGroup().location,'/providers/Microsoft.Compute/images/epo-image-v1')]",
+        "ahImage" : "[concat('/subscriptions/dc73da86-0ff1-4998-b337-1341112cf20a/resourceGroups/',resourceGroup().location,'/providers/Microsoft.Compute/images/ah-image-v1')]",
+        "dxlImage": "[concat('/subscriptions/dc73da86-0ff1-4998-b337-1341112cf20a/resourceGroups/',resourceGroup().location,'/providers/Microsoft.Compute/images/dxl-image-v1')]",
+        
+
+        "epoExtension": "ePOCustomScriptExtension",
+        
+        "ahVMName" : "[concat(resourceGroup().name,'ah')]" ,
+        "ahNicName" : "[concat(resourceGroup().name,'-ah-nic')]",
+        "ahExtension" : "ahCustomScriptExtension",
+        
+        "dxlVMName" : "[concat(resourceGroup().name,'dxl')]",
+        "dxlNICName" : "[concat(resourceGroup().name,'-dxl-nic')]",
+        "dxlExtension" : "dxlCustomScriptExtension",
+        
+        "albExtEPO": "[concat(resourceGroup().name,'-alb-epo')]",
+        "albEPOIP": "[concat(resourceGroup().name,'-alb-epoIP')]",
+        "lbEPOID": "[resourceId('Microsoft.Network/loadBalancers',variables('albExtEPO'))]",
+
+        "albExtAH" : "[concat(resourceGroup().name,'-alb-ah')]",
+        "albAHIP": "[concat(resourceGroup().name,'-alb-ip')]",
+        "lbAHID": "[resourceId('Microsoft.Network/loadBalancers',variables('albExtAH'))]",
+
+
+        "albExtBroker" : "[concat(resourceGroup().name,'-alb-broker')]",
+        "albBrokerIP": "[concat(resourceGroup().name,'-alb-brokerip')]",
+        "lbBrokerID": "[resourceId('Microsoft.Network/loadBalancers',variables('albExtBroker'))]",
+
+        "epoDomain" : "[concat('epolb-',resourceGroup().name)]",
+        "ahDomain" : "[concat(resourceGroup().name,'lbah')]",
+        "brokerDomain" : "[concat(resourceGroup().name,'lbdxl')]",
+
+        "epoExtURL" :  "[concat(variables('epoDomain'),'.',parameters('appDomain'))]",
+        "ahExtURL" :  "[concat(variables('ahDomain'),'.',parameters('appDomain'))]",
+        "brokerExtURL" :  "[concat(variables('brokerDomain'),'.',parameters('appDomain'))]",
+
+        "agDomain" : "[concat('epo-', resourceGroup().name)]",
+        "applicationGatewayName" : "[concat(resourceGroup().name,'appgw')]",
+        "agEPOIP" : "[concat(resourceGroup().name,'-ag-pubip')]",
+        "applicationGatewaySize" : "Standard_Medium",
+        "agCapacity" : "2",
+        "agIPRef": "[resourceId('Microsoft.Network/publicIPAddresses',variables('agEPOIP'))]",
+        "applicationGatewayID": "[resourceId('Microsoft.Network/applicationGateways',variables('applicationGatewayName'))]",
+
+        "agCRecordName" :  "[concat(variables('agDomain'),'.',resourceGroup().location,'.cloudapp.azure.com')]",
+        "dxlCRecordName" : "[concat(variables('brokerDomain'),'.',resourceGroup().location,'.cloudapp.azure.com')]",
+        "epoCRecordName" : "[concat(variables('epoDomain'),'.',resourceGroup().location,'.cloudapp.azure.com')]",
+        "ahCRecordName" : "[concat(variables('ahDomain'),'.',resourceGroup().location,'.cloudapp.azure.com')]"
+     
+    },
+    "resources": [
+        {
+            "apiVersion": "2017-05-10",
+            "name": "nestedTemplate",
+            "type": "Microsoft.Resources/deployments",
+            "resourceGroup": "[parameters('dnsZoneRG')]",
+            "properties": {
+                "mode": "Incremental",
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "variables": {},
+                    "resources": [
+                      {
+                        "type": "microsoft.network/dnszones",
+                        "name": "[parameters('appDomain')]",
+                        "apiVersion": "2015-05-04-preview",
+                        "location": "global",
+                        "properties": {
+                        }
+                    },
+                    {
+                        "type": "microsoft.network/dnszones/CNAME",
+                        "name": "[concat(parameters('appDomain'), concat('/', variables('epoDomain')))]",
+                        "apiVersion": "2015-05-04-preview",
+                        "location": "global",
+                        "properties": 
+                        {
+                          "TTL": 3600,
+                          "CNAMERecord": {
+                              "cname": "[variables('epoCRecordName')]"
+                            }
+                          },
+                        "dependsOn": [
+                          "[concat('Microsoft.Network/dnszones/', parameters('appDomain'))]"
+                          
+                        ]
+                      },
+                      {
+                          "type": "microsoft.network/dnszones/CNAME",
+                          "name": "[concat(parameters('appDomain'), concat('/', variables('ahDomain')))]",
+                          "apiVersion": "2015-05-04-preview",
+                          "location": "global",
+                          "properties": 
+                          {
+                            "TTL": 3600,
+                            "CNAMERecord": {
+                              "cname": "[variables('ahCRecordName')]"
+                            }
+                          },
+                          "dependsOn": [
+                            "[concat('Microsoft.Network/dnszones/', parameters('appDomain'))]"
+                            
+                          ]
+                      },
+                        {
+                          "type": "microsoft.network/dnszones/CNAME",
+                          "name": "[concat(parameters('appDomain'), concat('/', variables('brokerDomain')))]",
+                          "apiVersion": "2015-05-04-preview",
+                          "location": "global",
+                          "properties": 
+                          {
+                            "TTL": 3600,
+                            "CNAMERecord": {
+                              "cname": "[variables('dxlCRecordName')]"
+                            }
+                          },
+                          "dependsOn": [
+                            "[concat('Microsoft.Network/dnszones/', parameters('appDomain'))]"
+                            
+                          ]
+                        },
+                      {
+                        "type": "microsoft.network/dnszones/CNAME",
+                        "name": "[concat(parameters('appDomain'), concat('/', variables('agDomain')))]",
+                        "apiVersion": "2015-05-04-preview",
+                        "location": "global",
+                        "properties": 
+                        {
+                          "TTL": 3600,
+                          "CNAMERecord": {
+                            "cname": "[variables('agCRecordName')]"
+                          }
+                        },
+                        "dependsOn": [
+                          "[concat('Microsoft.Network/dnszones/', parameters('appDomain'))]"
+                          
+                        ]
+                      }
+                    ]
+                },
+                
+                "parameters": {}
+            },
+            "dependsOn": [
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('albEPOIP'))]",
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('albBrokerIP'))]",
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('albAHIP'))]"
+            ]
+            
+        },
+        {
+            "apiVersion": "2017-08-01",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('agEPOIP')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "publicIPAddressVersion": "IPv4",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('agDomain')]"
+                 }
+            }
+        },
+        {
+            "apiVersion": "2017-08-01",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('albEPOIP')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "publicIPAddressVersion": "IPv4",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('epoDomain')]"
+                }
+            }
+        },
+        {
+            "apiVersion": "2017-08-01",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('albAHIP')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "publicIPAddressVersion": "IPv4",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('ahDomain')]"
+                }
+            }
+        },
+        {
+            "apiVersion": "2017-08-01",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('albBrokerIP')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "publicIPAddressVersion": "IPv4",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('brokerDomain')]"
+                }
+            }
+        },
+        {
+            "name": "[variables('managerName')]",
+            "condition": "[equals(bool('false'),parameters('CertificateAuth'))]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2016-04-30-preview",
+            "location":  "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('managerNIC'))]"
+            ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[variables('managerName')]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[variables('adminPassword')]"
+                },
+                "hardwareProfile": {
+                    "vmSize": "[variables('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "Canonical",
+                        "offer": "UbuntuServer",
+                        "sku": "16.04-LTS",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "Premium_LRS"
+                        }
+                    },
+                    "dataDisks": []
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('managerNIC'))]"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "[variables('managerNameCert')]",
+            "condition": "[parameters('CertificateAuth')]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2016-04-30-preview",
+            "location":  "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('managerNIC'))]"
+            ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[variables('managerNameCert')]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "linuxConfiguration": {
+                        "disablePasswordAuthentication": "true",
+                        "ssh": {
+                            "publicKeys": [
+                                {
+                                    "path": "[concat('/home/', parameters('adminUsername'), '/.ssh/authorized_keys')]",
+                                    "keyData": "[parameters('adminPublicKey')]"
+                                }
+                            ]
+                        }
+                    }
+                },
+                "hardwareProfile": {
+                    "vmSize": "[variables('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "Canonical",
+                        "offer": "UbuntuServer",
+                        "sku": "16.04-LTS",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "Premium_LRS"
+                        }
+                    },
+                    "dataDisks": []
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('managerNIC'))]"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "[variables('managerNIC')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2016-09-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/publicIpAddresses/', variables('managerIPName'))]",
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('managerSGName'))]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            },
+                            "privateIPAllocationMethod": "Dynamic",
+                            "publicIpAddress": {
+                                "id": "[resourceId(resourceGroup().name,'Microsoft.Network/publicIpAddresses', variables('managerIPName'))]"
+                            }
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/networkSecurityGroups', variables('managerSGName'))]"
+                }
+            }
+        },
+        {
+            "name": "[variables('managerIPName')]",
+            "type": "Microsoft.Network/publicIpAddresses",
+            "apiVersion": "2017-08-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "publicIPAddressVersion": "IPv4",
+                "dnsSettings": {
+                    "domainNameLabel": "[concat(resourceGroup().name,'-mgr')]"
+                 }
+            }
+        },
+        {
+            "name": "[variables('managerSGName')]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2017-06-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "default-allow-ssh",
+                        "properties": {
+                            "priority": 1000,
+                            "protocol": "TCP",
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "22"
+                        }
+                    }
+                ]
+            }
+        },
+       
+        {
+            "name": "[variables('sgExtEPO')]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2017-06-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "Allow-epo-https",
+                        "properties": {
+                            "priority": 100,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "8443",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    },
+                    {
+                        "name": "Allow-epo-internal",
+                        "properties": {
+                            "priority": 400,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "8444",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    },
+                    {
+                        "name": "Allow-ah-https",
+                        "properties": {
+                            "priority": 200,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "443",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    },
+                    {
+                        "name": "Allow-ah-http",
+                        "properties": {
+                            "priority": 300,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "80",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    }
+                ]
+
+            }
+        },
+        {
+            "name": "[variables('sgExtAH')]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2017-06-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "Allow-ah-https",
+                        "properties": {
+                            "priority": 100,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "443",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    },
+                    {
+                        "name": "Allow-ah-http",
+                        "properties": {
+                            "priority": 300,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "80",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    }
+                ]
+
+            }
+        },
+        {
+            "name": "[variables('sgExtBroker')]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2017-06-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "Allow-dxl-https",
+                        "properties": {
+                            "priority": 100,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "8883",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    },
+                    {
+                        "name": "Allow-dxl-agent",
+                        "properties": {
+                            "priority": 200,
+                            "protocol": "TCP",  
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "Internet",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "8081",
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    }
+                ]
+
+            }
+        },
+        {
+            "name": "[variables('virtualNetworkName')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2016-12-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('addressPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('subnetName')]",
+                        "properties": {
+                            "addressPrefix": "[variables('subnetPrefix')]",
+                            "serviceEndpoints": [ { "service": "Microsoft.Sql" } ]
+                        }
+                    },
+                    {
+                        "name": "[variables('agSubnetName')]",
+                        "properties": {
+                          "addressPrefix": "[variables('agSubnetPrefix')]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2017-06-01",
+            "condition": "[parameters('SSLOffload')]",
+            "name": "[variables('applicationGatewayName')]",
+            "type": "Microsoft.Network/applicationGateways",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('agEPOIP'))]",
+              "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterfaceName'))]"
+            ],
+            "properties": {
+              "sku": {
+                "name": "[variables('applicationGatewaySize')]",
+                "tier": "Standard",
+                "capacity": "[variables('agCapacity')]"
+              },
+              "sslCertificates": [
+                {
+                  "name": "appGatewaySslCert",
+                  "properties": {
+                    "data": "[parameters('certData')]",
+                    "password": "[parameters('certPassword')]"
+                  }
+                }
+              ],
+              "gatewayIPConfigurations": [
+                {
+                  "name": "appGatewayIpConfig",
+                  "properties": {
+                    "subnet": {
+                      "id": "[variables('agSubnetRef')]"
+                    }
+                  }
+                }
+              ],
+              "frontendIPConfigurations": [
+                {
+                  "name": "appGatewayFrontendIP",
+                  "properties": {
+                    "PublicIPAddress": {
+                      "id": "[variables('agIPRef')]"
+                    }
+                  }
+                }
+              ],
+              "frontendPorts": [
+                {
+                  "name": "appGatewayFrontendPort",
+                  "properties": {
+                    "Port": 443
+                  }
+                }
+              ],
+              "backendAddressPools": [
+                {
+                  "name": "appGatewayBackendPool",
+                  "properties": {
+                            "BackendAddresses": [
+                              {
+                                "IpAddress": "[concat(reference(variables('networkInterfaceName')).ipConfigurations[0].properties.privateIPAddress)]"
+                              }
+                            ]
+                        }
+                }
+              ],
+              "backendHttpSettingsCollection": [
+                {
+                  "name": "appGatewayBackendHttpSettings",
+                  "properties": {
+                    "Port": 8080,
+                    "Protocol": "Http",
+                    "CookieBasedAffinity": "Disabled"
+                  }
+                }
+              ],
+              "httpListeners": [
+                {
+                  "name": "appGatewayHttpListener",
+                  "properties": {
+                    "FrontendIPConfiguration": {
+                      "Id": "[concat(variables('applicationGatewayID'), '/frontendIPConfigurations/appGatewayFrontendIP')]"
+                    },
+                    "FrontendPort": {
+                      "Id": "[concat(variables('applicationGatewayID'), '/frontendPorts/appGatewayFrontendPort')]"
+                    },
+                    "Protocol": "Https",
+                    "SslCertificate": {
+                        "Id": "[concat(variables('applicationGatewayID'), '/sslCertificates/appGatewaySslCert')]"
+                        }
+                    }
+                }
+              ],
+              "requestRoutingRules": [
+                {
+                  "Name": "rule1",
+                  "properties": {
+                    "RuleType": "Basic",
+                    "httpListener": {
+                      "id": "[concat(variables('applicationGatewayID'), '/httpListeners/appGatewayHttpListener')]"
+                    },
+                    "backendAddressPool": {
+                      "id": "[concat(variables('applicationGatewayID'), '/backendAddressPools/appGatewayBackendPool')]"
+                    },
+                    "backendHttpSettings": {
+                      "id": "[concat(variables('applicationGatewayID'), '/backendHttpSettingsCollection/appGatewayBackendHttpSettings')]"
+                    }
+                  }
+                }
+              ]
+            }  
+        },
+        {
+            "apiVersion": "2017-06-01",
+            "name": "[variables('albExtEPO')]",
+            "type": "Microsoft.Network/loadBalancers",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/publicIPAddresses/', variables('albEPOIP'))]"
+            ],
+            "properties": {
+                "frontendIPConfigurations": [
+                    {
+                        "name": "LoadBalancerFrontend",  
+                          "properties": {
+                            "publicIPAddress": {
+                                "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/publicIPAddresses', variables('albEPOIP'))]"
+                            }
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "epoBackendPool" 
+                    }
+                ],
+                "probes": [
+                    {
+                      "name": "epoProbe",
+                      "properties": {
+                        "protocol": "tcp",
+                        "port": 8443,
+                        "intervalInSeconds": 5,
+                        "numberOfProbes": 2
+                      }
+                    },
+                    {
+                        "name": "epoahprobe",
+                        "properties": {
+                          "protocol": "tcp",
+                          "port": 443,
+                          "intervalInSeconds": 5,
+                          "numberOfProbes": 2
+                        }
+                      }
+                  ],
+                  "loadBalancingRules":[  
+                    {  
+                       "name":"epoLBRule",
+                       "properties":{  
+                          "frontendIPConfiguration":{  
+                             "id":"[concat(variables('lbEPOID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+                          },
+                          "backendAddressPool":{  
+                             "id":"[concat(variables('lbEPOID'),'/backendAddressPools/epoBackendPool')]"
+                          },
+                          "protocol":"tcp",
+                          "frontendPort":8443,
+                          "backendPort":8443,
+                          "enableFloatingIP":false,
+                          "idleTimeoutInMinutes":5,
+                          "probe":{  
+                             "id":"[concat(variables('lbEPOID'),'/probes/epoProbe')]"
+                          }
+                       }
+                    },
+                    {  
+                        "name":"epo8444Rule",
+                        "properties":{  
+                           "frontendIPConfiguration":{  
+                              "id":"[concat(variables('lbEPOID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+                           },
+                           "backendAddressPool":{  
+                              "id":"[concat(variables('lbEPOID'),'/backendAddressPools/epoBackendPool')]"
+                           },
+                           "protocol":"tcp",
+                           "frontendPort":8444,
+                           "backendPort":8444,
+                           "enableFloatingIP":false,
+                           "idleTimeoutInMinutes":5,
+                           "probe":{  
+                              "id":"[concat(variables('lbEPOID'),'/probes/epoProbe')]"
+                           }
+                        }
+                     },
+                    {  
+                        "name":"ah443Rule",
+                        "properties":{  
+                           "frontendIPConfiguration":{  
+                              "id":"[concat(variables('lbEPOID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+                           },
+                           "backendAddressPool":{  
+                              "id":"[concat(variables('lbEPOID'),'/backendAddressPools/epoBackendPool')]"
+                           },
+                           "protocol":"tcp",
+                           "frontendPort":443,
+                           "backendPort":443,
+                           "enableFloatingIP":false,
+                           "idleTimeoutInMinutes":5,
+                           "probe":{  
+                              "id":"[concat(variables('lbEPOID'),'/probes/epoahprobe')]"
+                           }
+                        }
+                    },
+                    {  
+                        "name":"ah80Rule",
+                        "properties":{  
+                           "frontendIPConfiguration":{  
+                              "id":"[concat(variables('lbEPOID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+                           },
+                           "backendAddressPool":{  
+                              "id":"[concat(variables('lbEPOID'),'/backendAddressPools/epoBackendPool')]"
+                           },
+                           "protocol":"tcp",
+                           "frontendPort":80,
+                           "backendPort":80,
+                           "enableFloatingIP":false,
+                           "idleTimeoutInMinutes":5,
+                           "probe":{  
+                              "id":"[concat(variables('lbEPOID'),'/probes/epoahprobe')]"
+                           }
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+            "name": "[concat(variables('albExtEPO'), '/', 'epo-rdp-inbound')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('albEPOIP'))]",
+              "[concat('Microsoft.Network/loadBalancers/', variables('albExtEPO'))]"
+            ],
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[concat(variables('lbEPOID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "protocol": "tcp",
+              "frontendPort": "3389",
+              "backendPort": "3389",
+              "enableFloatingIP": false
+            }
+        },
+        {
+            "apiVersion": "2017-06-01",
+            "name": "[variables('albExtAH')]",
+            "type": "Microsoft.Network/loadBalancers",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/publicIPAddresses/', variables('albAHIP'))]"
+            ],
+            "properties": {
+                "frontendIPConfigurations": [
+                    {
+                        "name": "LoadBalancerFrontend",  
+                          "properties": {
+                            "publicIPAddress": {
+                                "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/publicIPAddresses', variables('albAHIP'))]"
+                            }
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "ahBackendPool" 
+                    }
+                ],
+                "probes": [
+                    {
+                      "name": "ahProbe",
+                      "properties": {
+                        "protocol": "tcp",
+                        "port": 443,
+                        "intervalInSeconds": 5,
+                        "numberOfProbes": 2
+                         }
+                    }
+                   ],
+                  "loadBalancingRules":[  
+                    {  
+                       "name":"ah443Rule",
+                       "properties":{  
+                          "frontendIPConfiguration":{  
+                             "id":"[concat(variables('lbAHID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+                          },
+                          "backendAddressPool":{  
+                             "id":"[concat(variables('lbAHID'),'/backendAddressPools/ahBackendPool')]"
+                          },
+                          "protocol":"tcp",
+                          "frontendPort":443,
+                          "backendPort": 443,
+                          "enableFloatingIP":false,
+                          "idleTimeoutInMinutes":5,
+                          "probe":{  
+                             "id":"[concat(variables('lbAHID'),'/probes/ahProbe')]"
+                          }
+                       }
+                    },
+                    {  
+                        "name":"ah80Rule",
+                        "properties":{  
+                           "frontendIPConfiguration":{  
+                              "id":"[concat(variables('lbAHID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+                           },
+                           "backendAddressPool":{  
+                              "id":"[concat(variables('lbAHID'),'/backendAddressPools/ahBackendPool')]"
+                           },
+                           "protocol":"tcp",
+                           "frontendPort":80,
+                           "backendPort": 80,
+                           "enableFloatingIP":false,
+                           "idleTimeoutInMinutes":5,
+                           "probe":{  
+                              "id":"[concat(variables('lbAHID'),'/probes/ahProbe')]"
+                           }
+                        }
+                     }
+
+                ]
+            }
+        },
+        {
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+            "name": "[concat(variables('albExtAH'), '/', 'ah-rdp-inbound')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('albAHIP'))]",
+              "[concat('Microsoft.Network/loadBalancers/', variables('albExtAH'))]"
+            ],
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[concat(variables('lbAHID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "protocol": "tcp",
+              "frontendPort": "3389",
+              "backendPort": "3389",
+              "enableFloatingIP": false
+            }
+        },
+        {
+            "apiVersion": "2017-06-01",
+            "name": "[variables('albExtBroker')]",
+            "type": "Microsoft.Network/loadBalancers",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/publicIPAddresses/', variables('albBrokerIP'))]"
+            ],
+            "properties": {
+                "frontendIPConfigurations": [
+                    {
+                        "name": "LoadBalancerFrontend",  
+                          "properties": {
+                            "publicIPAddress": {
+                                "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/publicIPAddresses', variables('albBrokerIP'))]"
+                            }
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "brokerBackendPool" 
+                    }
+                ],
+                "probes": [
+                    {
+                      "name": "brokerProbe",
+                      "properties": {
+                        "protocol": "tcp",
+                        "port": 8883,
+                        "intervalInSeconds": 5,
+                        "numberOfProbes": 2
+                         }
+                    }
+                   ],
+                  "loadBalancingRules":[  
+                    {  
+                       "name":"brokerLBRule",
+                       "properties":{  
+                          "frontendIPConfiguration":{  
+                             "id":"[concat(variables('lbBrokerID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+                          },
+                          "backendAddressPool":{  
+                             "id":"[concat(variables('lbBrokerID'),'/backendAddressPools/brokerBackendPool')]"
+                          },
+                          "protocol":"tcp",
+                          "frontendPort":8081,
+                          "backendPort":8081,
+                          "enableFloatingIP":false,
+                          "idleTimeoutInMinutes":5,
+                          "probe":{  
+                             "id":"[concat(variables('lbBrokerID'),'/probes/brokerProbe')]"
+                          }
+                       }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+            "name": "[concat(variables('albExtBroker'), '/', 'http-inbound')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('albBrokerIP'))]",
+              "[concat('Microsoft.Network/loadBalancers/', variables('albExtBroker'))]"
+            ],
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[concat(variables('lbBrokerID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "protocol": "tcp",
+              "frontendPort": "8883",
+              "backendPort": "8883",
+              "enableFloatingIP": false
+            }
+        },
+        {
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+            "name": "[concat(variables('albExtBroker'), '/', 'ssh-inbound')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('albBrokerIP'))]",
+              "[concat('Microsoft.Network/loadBalancers/', variables('albExtBroker'))]"
+            ],
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[concat(variables('lbBrokerID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]"
+              },
+              "protocol": "tcp",
+              "frontendPort": "22",
+              "backendPort": "22",
+              "enableFloatingIP": false
+            }
+        },
+        {
+            "name": "[variables('networkInterfaceName')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2016-09-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('sgExtEPO'))]",
+                "[concat('Microsoft.Network/loadBalancers/', variables('albExtEPO'))]",
+                "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtEPO')), '/inboundNatRules/epo-rdp-inbound')]"
+                
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            },
+                            "privateIPAllocationMethod": "Dynamic",
+                            "loadBalancerBackendAddressPools": [
+                                {
+                                    "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('albExtEPO')), '/backendAddressPools/epoBackendPool')]"
+                                }
+                            ],  
+                            "loadBalancerInboundNatRules": [
+                               {
+                                    "id": "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtEPO')), '/inboundNatRules/epo-rdp-inbound')]"
+                                }
+                            ]
+
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/networkSecurityGroups', variables('sgExtEPO'))]"
+                   }
+            }
+        },
+        
+        {
+            "name": "[variables('dxlNICName')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2016-09-01",
+            "location":  "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('sgExtBroker'))]",
+                "[concat('Microsoft.Network/loadBalancers/', variables('albExtBroker'))]",
+                "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtBroker')), '/inboundNatRules/ssh-inbound')]",
+                "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtBroker')), '/inboundNatRules/http-inbound')]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            },
+                            "privateIPAllocationMethod": "Dynamic",
+                            "loadBalancerBackendAddressPools": [
+                                {
+                                    "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('albExtBroker')), '/backendAddressPools/brokerBackendPool')]"
+                                }
+                            ],
+                            "loadBalancerInboundNatRules": [
+                                {
+                                    "id": "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtBroker')), '/inboundNatRules/http-inbound')]"
+                                },
+                                {
+                                    "id": "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtBroker')), '/inboundNatRules/ssh-inbound')]"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/networkSecurityGroups', variables('sgExtBroker'))]"
+                }
+            }
+        },
+        {
+            "name": "[variables('ahNicName')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2016-09-01",
+            "location":  "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('sgExtAH'))]",
+                "[concat('Microsoft.Network/loadBalancers/', variables('albExtAH'))]",
+                "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtAH')), '/inboundNatRules/ah-rdp-inbound')]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            },
+                            "privateIPAllocationMethod": "Dynamic",
+                            "loadBalancerBackendAddressPools": [
+                                {
+                                    "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('albExtAH')), '/backendAddressPools/ahBackendPool')]"
+                                }
+                            ],
+                            "loadBalancerInboundNatRules": [
+                                {
+                                    "id": "[concat(resourceId('Microsoft.Network/loadBalancers',variables('albExtAH')), '/inboundNatRules/ah-rdp-inbound')]"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/networkSecurityGroups', variables('sgExtAH'))]"
+                }
+            }
+        },
+        {
+            "apiVersion": "2015-05-01-preview",
+            "location": "[resourceGroup().location]",
+            "name": "[variables('dbServerName')]",
+            "properties": {
+                "administratorLogin": "[variables('administratorLogin')]",
+                "administratorLoginPassword": "[variables('administratorLoginPassword')]",
+                "version": "12.0"
+            },
+            "resources": [
+                {
+                    "apiVersion": "2014-04-01-preview",
+                    "dependsOn": [
+                        "[concat('Microsoft.Sql/servers/', variables('dbServerName'))]"
+                    ],
+                    "location": "[resourceGroup().location]",
+                    "name": "[variables('databaseName')]",
+                    "properties": {
+                        "collation": "[variables('collation')]",
+                        "edition": "[variables('edition')]",
+                        "maxSizeBytes": "[variables('maxSizeBytes')]",
+                        "requestedServiceObjectiveId": "[variables('requestedServiceObjectiveId')]",
+                        "sampleName": "[variables('sampleName')]"
+                    },
+                    "type": "databases"
+                },
+                {
+                    "comments": "Generalized from resource: '/subscriptions/dc73da86-0ff1-4998-b337-1341112cf20a/resourceGroups/fff/providers/Microsoft.Sql/servers/fffeposql/virtualNetworkRules/newVnetRule1'.",
+                    "type": "virtualNetworkRules",
+                    "name": "AllowMyVnet",
+                    "apiVersion": "2015-05-01-preview",
+                    "scale": null,
+                    "properties": {
+                        "virtualNetworkSubnetId": "[variables('subnetRef')]"
+                    },
+                    "dependsOn": [
+                        "[concat('Microsoft.Sql/servers/', variables('dbServerName'))]",
+                        "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+                    ]
+                }
+            ],
+            "type": "Microsoft.Sql/servers"
+        },
+        {
+            "type": "Microsoft.Compute/availabilitySets",
+            "name": "[variables('availabilitySetName')]",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[resourceGroup().location]",
+            "properties": {
+               "platformFaultDomainCount": "2",
+               "platformUpdateDomainCount": "2",
+               "managed" : "true"
+            }
+        },
+        {
+            "name": "[variables('virtualMachineName')]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('networkInterfaceName'))]"
+            ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[variables('virtualMachineName')]",
+                    "adminUsername": "[variables('adminUsername')]",
+                    "adminPassword": "[variables('adminPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVmAgent": "true"
+                    }
+                },
+                "hardwareProfile": {
+                    "vmSize": "[variables('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "id": "[variables('imageId')]"
+                    },
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "Premium_LRS"
+                        }
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterfaceName'))]"
+                        }
+                    ]
+                }
+            },
+            "resources": [
+                {
+                    "type": "extensions",
+                    "name": "[variables('epoExtension')]",
+                    "apiVersion": "2015-06-15",
+                    "location": "[resourceGroup().location]",
+                    "dependsOn": [
+                        "[variables('virtualMachineName')]",
+                        "[concat('Microsoft.Sql/servers/',  variables('dbServerName'),'/databases/',variables('databaseName'))]"
+                    ],
+                    "properties": {
+                        "publisher": "Microsoft.Compute",
+                        "type": "CustomScriptExtension",
+                        "typeHandlerVersion": "1.8",
+                        "autoUpgradeMinorVersion": true,
+                        "settings": {
+                            "commandToExecute": "[concat('cd C:\\eposcripts\\ & node provisioning.js --allow_dns_overwrite 0 wait_for_db 0 --db_provision 1 --db_server ',variables('dbServerName'),'.database.windows.net --db_database ',variables('databaseName'),' --db_port 1433 --db_user ',variables('administratorLogin'),' --db_password ',variables('administratorLoginPassword'),' --epo_provision 1 --epo_server ',variables('epoExtURL'),' --epo_server_ip ',reference(variables('networkInterfaceName')).ipConfigurations[0].properties.privateIPAddress,'  --epo_server_port 8443 --epo_user admin --epo_password welcome --epo_dr_password welcome123 --ah_provision 1 --ah_remote 0 --ah_server ',variables('ahExtURL'),' --ah_server_ip ', reference(variables('networkInterfaceName')).ipConfigurations[0].properties.privateIPAddress,' --ah_vgroup vgroup --repo_provision 1') ]"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "[variables('ahVMName')]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('ahNicName'))]"
+             ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[variables('ahVMName')]",
+                    "adminUsername": "[variables('adminUsername')]",
+                    "adminPassword": "[variables('adminPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVmAgent": "true"
+                    }
+                },
+                "hardwareProfile": {
+                    "vmSize": "[variables('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "id" : "[variables('ahImage')]"
+                    },
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "Premium_LRS"
+                        }
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('ahNicName'))]"
+                        }
+                    ]
+                }
+                
+            },
+            "resources": [
+                {
+                    "type": "extensions",
+                    "name": "[variables('ahExtension')]",
+                    "apiVersion": "2015-06-15",
+                    "location": "[resourceGroup().location]",
+                    "dependsOn": [
+                        "[variables('ahVMName')]",
+                        "[variables('epoExtension')]"
+                    ],
+                    "properties": {
+                        "publisher": "Microsoft.Compute",
+                        "type": "CustomScriptExtension",
+                        "typeHandlerVersion": "1.8",
+                        "autoUpgradeMinorVersion": true,
+                        "settings": {
+                            "commandToExecute": "[concat('cd C:\\eposcripts\\ & node provisioning.js --allow_dns_overwrite 0 wait_for_db 0 --db_provision 0 --db_server ',variables('dbServerName'),'.database.windows.net --db_database ',variables('databaseName'),' --db_port 1433 --db_user ',variables('administratorLogin'),' --db_password ',variables('administratorLoginPassword'),' --epo_provision 0 --epo_server ', variables('epoExtURL') ,' --epo_server_ip ',reference(variables('networkInterfaceName')).ipConfigurations[0].properties.privateIPAddress,'  --epo_server_port 8443 --epo_user admin --epo_password welcome --epo_dr_password welcome123 --ah_provision 1 --ah_remote 1 --ah_server ',variables('ahExtURL'),' --ah_server_ip ', reference(variables('ahNicName')).ipConfigurations[0].properties.privateIPAddress,' --ah_vgroup vgroup --repo_provision 0') ]"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "[variables('dxlVMName')]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('dxlNICName'))]"
+            ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[variables('dxlVMName')]",
+                    "adminUsername": "[variables('adminUsername')]",
+                    "adminPassword": "[variables('adminPassword')]"
+                },
+                "hardwareProfile": {
+                    "vmSize": "[variables('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "id": "[variables('dxlImage')]"
+                    },
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "Premium_LRS"
+                        }
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('dxlNICName'))]"
+                        }
+                    ]
+                }
+            },
+            "resources": [
+                {
+                    "type": "extensions",
+                    "name": "[variables('dxlExtension')]",
+                    "apiVersion": "2015-06-15",
+                    "location": "[resourceGroup().location]",
+                    "dependsOn": [
+                        "[variables('dxlVMName')]",
+                        "[variables('epoExtension')]"
+                    ],
+                    "properties": {
+                       "publisher": "Microsoft.OSTCExtensions",
+                       "type": "CustomScriptForLinux",
+                       "typeHandlerVersion": "1.4",
+                        "autoUpgradeMinorVersion": true,
+                        "settings": {
+                            "commandToExecute": "[concat('/opt/McAfee/dxlbroker/init-dxl-broker.sh  --epo-server ',variables('epoExtURL') ,' --epo-port 8443 --epo-username admin --epo-password welcome --dxl-broker-url ', variables('brokerExtURL')  ,' --dxl-broker-port 8883 ')]"
+                        }
+                    }
+                }
+            ]
+        }
+    ],
+    "outputs": {
+        "adminUsername": {
+            "type": "string",
+            "value": "[variables('adminUsername')]"
+        },
+        "epoAgURL": {
+            "type": "string",
+            "value": "[concat('https://',variables('agDomain'),'.epoaz.net')]"
+        },
+        "epoLBURL": {
+            "type": "string",
+            "value": "[concat('https://',variables('epoDomain'),'.epoaz.net')]"
+        }
+   }
+}
